@@ -11,67 +11,111 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
 
 jobs:
-  lab:
-    name: lab cached ${{ matrix.replica }}
-    runs-on: xcode-27
-    timeout-minutes: 50
+  old:
+    name: old ${{ matrix.replica }}
     strategy:
       fail-fast: false
       matrix:
         replica: [1, 2]
-    env:
-      XCODEBUILD: >-
-        xcodebuild -quiet -skipPackagePluginValidation -packageAuthorizationProvider netrc
-        -derivedDataPath DerivedData/Make
-        -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates
-        -project Zoonk.xcodeproj -scheme Zoonk
-        CODE_SIGNING_ALLOWED=NO COMPILATION_CACHE_ENABLE_CACHING=YES
-        COMPILER_INDEX_STORE_ENABLE=NO GCC_GENERATE_DEBUGGING_SYMBOLS=NO
-        -only-testing:ZoonkTests
+    runs-on: xcode-27
+    timeout-minutes: 40
     steps:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 13271daeae81619b1ad8f345ddf8e4ce06b013bd
 
-      - name: Restore Swift packages
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/apple-source-packages
           key: ${{ runner.os }}-${{ runner.arch }}-apple-swiftpm-${{ hashFiles('apps/apple/**/Package.resolved') }}
 
-      - name: Pick simulator
+      - name: Run unit tests
+        env:
+          XCODEBUILD_ARGUMENTS: >-
+            -clonedSourcePackagesDirPath ${{ runner.temp }}/apple-source-packages
+            -onlyUsePackageVersionsFromResolvedFile
+            -skipPackageUpdates
+            -resultBundlePath ${{ runner.temp }}/apple-unit-tests.xcresult
+        # The newest runtime the image installs, which can trail Xcode's SDK while a new image rolls out
+        # (xcodebuild's default OS is the SDK's).
         run: |
           udid=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries | sort_by(.key) | .[].value[] | select(.name == "iPhone 17")] | last | .udid')
-          echo "UDID=$udid" >> "$GITHUB_ENV"
+          make -C apps/apple test TEST_DESTINATION="platform=iOS Simulator,id=$udid"
 
-      - name: Cold build
-        working-directory: apps/apple
-        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" build-for-testing
-
-      - name: Keep only the compilation cache and edit an app file
-        working-directory: apps/apple
+      - name: Report unit test results
+        if: always()
+        shell: bash
         run: |
-          du -sh DerivedData/Make/CompilationCache.noindex
-          mv DerivedData/Make/CompilationCache.noindex "$RUNNER_TEMP/cas"
-          rm -rf DerivedData/Make
-          mkdir -p DerivedData/Make
-          mv "$RUNNER_TEMP/cas" DerivedData/Make/CompilationCache.noindex
-          echo "// lab edit" >> Zoonk/App/AppView.swift
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/apple-unit-tests.xcresult" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Warm build after an app edit
-        working-directory: apps/apple
-        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" build-for-testing
-
-      - name: Boot simulator
-        run: |
-          xcrun simctl boot "$UDID"
-          xcrun simctl bootstatus "$UDID"
-
-      - name: Run tests
-        working-directory: apps/apple
-        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/unit.xcresult" test-without-building
-
-      - name: Summarize
+      - name: Sum test durations
         if: always()
         run: |
-          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/unit.xcresult" > "$RUNNER_TEMP/tests.json"
-          jq -r '[.. | objects | select(.nodeType=="Test Case") | {id:.nodeIdentifier, d:.durationInSeconds}] | "sum=\(map(.d)|add) count=\(length)", (sort_by(-.d) | .[0:15][] | "\(.d)  \(.id)")' "$RUNNER_TEMP/tests.json"
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/apple-unit-tests.xcresult" | jq -r '[.. | objects | select(.nodeType=="Test Case") | {id:.nodeIdentifier, d:.durationInSeconds}] | "sum=\(map(.d)|add) count=\(length)", (sort_by(-.d) | .[0:8][] | "\(.d)  \(.id)")'
+
+  new:
+    name: new ${{ matrix.replica }}
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Identify Xcode toolchain
+        id: xcode
+        run: |
+          set -o pipefail
+          xcodebuild -version | shasum -a 256 | awk '{ print "version=" $1 }' >> "$GITHUB_OUTPUT"
+
+      - name: Cache Swift packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/apple-source-packages
+          key: ${{ runner.os }}-${{ runner.arch }}-apple-swiftpm-${{ hashFiles('apps/apple/**/Package.resolved') }}
+
+      # The simulator build compiles differently from the build job's device build, so it keeps its
+      # own entry, keyed the same way.
+      - name: Cache Xcode compilations
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: apps/apple/DerivedData/Make/CompilationCache.noindex
+          key: ${{ runner.os }}-${{ runner.arch }}-apple-test-compilation-xcode-${{ steps.xcode.outputs.version }}-${{ hashFiles('apps/apple/Makefile', '.github/workflows/apple.yml') }}-${{ hashFiles('apps/apple/**/Package.resolved', 'apps/apple/**/*.xcproj', 'apps/apple/ZoonkAPI/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-apple-test-compilation-xcode-${{ steps.xcode.outputs.version }}-${{ hashFiles('apps/apple/Makefile', '.github/workflows/apple.yml') }}-
+
+      - name: Run unit tests
+        env:
+          XCODEBUILD_ARGUMENTS: >-
+            -clonedSourcePackagesDirPath ${{ runner.temp }}/apple-source-packages
+            -onlyUsePackageVersionsFromResolvedFile
+            -skipPackageUpdates
+            -resultBundlePath ${{ runner.temp }}/apple-unit-tests.xcresult
+            COMPILATION_CACHE_ENABLE_CACHING=YES
+            COMPILER_INDEX_STORE_ENABLE=NO
+            GCC_GENERATE_DEBUGGING_SYMBOLS=NO
+        # The newest runtime the image installs, which can trail Xcode's SDK while a new image rolls out
+        # (xcodebuild's default OS is the SDK's).
+        run: |
+          udid=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries | sort_by(.key) | .[].value[] | select(.name == "iPhone 17")] | last | .udid')
+          make -C apps/apple test TEST_DESTINATION="platform=iOS Simulator,id=$udid"
+
+      - name: Report unit test results
+        if: always()
+        shell: bash
+        run: |
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/apple-unit-tests.xcresult" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sum test durations
+        if: always()
+        run: |
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/apple-unit-tests.xcresult" | jq -r '[.. | objects | select(.nodeType=="Test Case") | {id:.nodeIdentifier, d:.durationInSeconds}] | "sum=\(map(.d)|add) count=\(length)", (sort_by(-.d) | .[0:8][] | "\(.d)  \(.id)")'
