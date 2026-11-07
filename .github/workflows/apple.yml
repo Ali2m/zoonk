@@ -12,22 +12,25 @@ env:
 
 jobs:
   lab:
-    name: lab ${{ matrix.variant }} ${{ matrix.replica }}
+    name: lab cached ${{ matrix.replica }}
     runs-on: xcode-27
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        variant: [baseline, lean]
         replica: [1, 2]
+    env:
+      XCODEBUILD: >-
+        xcodebuild -quiet -skipPackagePluginValidation -packageAuthorizationProvider netrc
+        -derivedDataPath DerivedData/Make
+        -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates
+        -project Zoonk.xcodeproj -scheme Zoonk
+        CODE_SIGNING_ALLOWED=NO COMPILATION_CACHE_ENABLE_CACHING=YES
+        COMPILER_INDEX_STORE_ENABLE=NO GCC_GENERATE_DEBUGGING_SYMBOLS=NO
+        -only-testing:ZoonkTests
     steps:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Runner hardware
-        run: |
-          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
-          xcrun simctl list devices booted
 
       - name: Restore Swift packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -35,54 +38,40 @@ jobs:
           path: ${{ runner.temp }}/apple-source-packages
           key: ${{ runner.os }}-${{ runner.arch }}-apple-swiftpm-${{ hashFiles('apps/apple/**/Package.resolved') }}
 
-      - name: Boot simulator
+      - name: Pick simulator
         run: |
           udid=$(xcrun simctl list devices available --json | jq -r '[.devices | to_entries | sort_by(.key) | .[].value[] | select(.name == "iPhone 17")] | last | .udid')
           echo "UDID=$udid" >> "$GITHUB_ENV"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid"
 
-      - name: Build for testing
+      - name: Cold build
+        working-directory: apps/apple
+        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" build-for-testing
+
+      - name: Keep only the compilation cache and edit an app file
         working-directory: apps/apple
         run: |
-          extra=""
-          if [ "${{ matrix.variant }}" = lean ]; then
-            extra="COMPILER_INDEX_STORE_ENABLE=NO GCC_GENERATE_DEBUGGING_SYMBOLS=NO"
-          fi
-          xcodebuild -quiet -skipPackagePluginValidation -packageAuthorizationProvider netrc \
-            -derivedDataPath DerivedData/Make \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" \
-            -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates \
-            -project Zoonk.xcodeproj -scheme Zoonk -destination "platform=iOS Simulator,id=$UDID" \
-            CODE_SIGNING_ALLOWED=NO $extra -only-testing:ZoonkTests build-for-testing
+          du -sh DerivedData/Make/CompilationCache.noindex
+          mv DerivedData/Make/CompilationCache.noindex "$RUNNER_TEMP/cas"
+          rm -rf DerivedData/Make
+          mkdir -p DerivedData/Make
+          mv "$RUNNER_TEMP/cas" DerivedData/Make/CompilationCache.noindex
+          echo "// lab edit" >> Zoonk/App/AppView.swift
+
+      - name: Warm build after an app edit
+        working-directory: apps/apple
+        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" build-for-testing
+
+      - name: Boot simulator
+        run: |
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID"
 
       - name: Run tests
         working-directory: apps/apple
-        run: |
-          parallel="-parallel-testing-enabled NO"
-          if [ "${{ matrix.variant }}" = lean ]; then
-            parallel="-parallel-testing-enabled YES -parallel-testing-worker-count 2"
-          fi
-          xcodebuild -quiet -skipPackagePluginValidation -packageAuthorizationProvider netrc \
-            -derivedDataPath DerivedData/Make \
-            -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" \
-            -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates \
-            -project Zoonk.xcodeproj -scheme Zoonk -destination "platform=iOS Simulator,id=$UDID" \
-            -resultBundlePath "$RUNNER_TEMP/unit.xcresult" \
-            CODE_SIGNING_ALLOWED=NO $parallel -only-testing:ZoonkTests test-without-building
+        run: $XCODEBUILD -clonedSourcePackagesDirPath "$RUNNER_TEMP/apple-source-packages" -destination "platform=iOS Simulator,id=$UDID" -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/unit.xcresult" test-without-building
 
       - name: Summarize
         if: always()
         run: |
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/unit.xcresult" > "$RUNNER_TEMP/tests.json"
-          jq -r '[.. | objects | select(.nodeType=="Test Case") | {id:.nodeIdentifier, d:.durationInSeconds}] | "sum=\(map(.d)|add) count=\(length)", (sort_by(-.d) | .[0:25][] | "\(.d)  \(.id)")' "$RUNNER_TEMP/tests.json"
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: unit-${{ matrix.variant }}-${{ matrix.replica }}
-          path: |
-            ${{ runner.temp }}/tests.json
-            ${{ runner.temp }}/unit.xcresult
-          retention-days: 3
+          jq -r '[.. | objects | select(.nodeType=="Test Case") | {id:.nodeIdentifier, d:.durationInSeconds}] | "sum=\(map(.d)|add) count=\(length)", (sort_by(-.d) | .[0:15][] | "\(.d)  \(.id)")' "$RUNNER_TEMP/tests.json"
