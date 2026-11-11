@@ -11,6 +11,7 @@ import { lessonVisualSchema } from "@zoonk/ai/tasks/visuals/schema";
 import { z } from "zod";
 import { saveAsset } from "./assets";
 import { drawVisual } from "./draw-visual";
+import { withKnowledge } from "./prompt-additions";
 
 const MAX_GOAL_LENGTH = 2000;
 const MAX_ANSWER_LENGTH = 1000;
@@ -46,6 +47,9 @@ const skill = z.object({
   name: z.string().min(1).max(300),
 });
 
+/** The assessment's subject and exam, which the knowledge base is searched for along with the skill. */
+const topic = z.string().max(500).nullish();
+
 const goalAnalysisInput = z.object({ goal: z.string().min(1).max(MAX_GOAL_LENGTH), language });
 
 const assessmentPlanInput = z.object({
@@ -72,6 +76,7 @@ const itemsInput = z.object({
   language,
   level,
   skill,
+  topic,
 });
 
 const interactiveItemsInput = z.object({
@@ -82,6 +87,7 @@ const interactiveItemsInput = z.object({
   level: z.enum(["beginner", "intermediate", "advanced"]),
   optionCount: z.number().int().min(2).max(8).nullish(),
   skill,
+  topic,
 });
 
 const itemSetInput = z.object({
@@ -90,6 +96,7 @@ const itemSetInput = z.object({
   language,
   questionCount: z.number().int().min(2).max(5),
   skills: z.array(skill.extend({ level })).min(1).max(4),
+  topic,
   usedTitles: z.array(z.string().max(300)).max(20).optional(),
 });
 
@@ -119,9 +126,23 @@ async function analyzeGoal(body: unknown) {
   return data;
 }
 
+/** What to look up in the knowledge base for a group of questions: the subject, then the skill. */
+function skillQuery(
+  topic: string | null | undefined,
+  skills: readonly z.infer<typeof skill>[],
+): string {
+  return [topic, ...skills.flatMap((entry) => [entry.name, entry.description])]
+    .filter(Boolean)
+    .join(" ");
+}
+
 async function planFromGoal(body: unknown) {
   const input = assessmentPlanInput.parse(body);
-  const { data } = await planAssessment({ ...textModel, ...input, today: today() });
+  const query = [input.goal, ...input.answers.map((entry) => entry.answer)].join(" ");
+
+  const { data } = await withKnowledge(query, () =>
+    planAssessment({ ...textModel, ...input, today: today() }),
+  );
 
   return data;
 }
@@ -131,30 +152,38 @@ async function planFromGoal(body: unknown) {
  * back as LaTeX, since the callers of this bridge typeset it.
  */
 async function writeItems(body: unknown) {
-  const { examFormat: exam, format, ...input } = itemsInput.parse(body);
+  const { examFormat: exam, format, topic, ...input } = itemsInput.parse(body);
   const style = exam ?? { name: null, style: "a clear classroom test" };
 
-  const { data } = await generateItems({
-    ...textModel,
-    ...input,
-    examFormat: format === "multipleSelect" ? { ...style, select: "all" } : exam,
-    format: format === "multipleSelect" ? "multipleChoice" : format,
-    latexMath: true,
-  });
+  const { data } = await withKnowledge(skillQuery(topic, [input.skill]), () =>
+    generateItems({
+      ...textModel,
+      ...input,
+      examFormat: format === "multipleSelect" ? { ...style, select: "all" } : exam,
+      format: format === "multipleSelect" ? "multipleChoice" : format,
+      latexMath: true,
+    }),
+  );
 
   return data;
 }
 
 async function writeSet(body: unknown) {
-  const input = itemSetInput.parse(body);
-  const { data } = await writeItemSet({ ...textModel, ...input, latexMath: true });
+  const { topic, ...input } = itemSetInput.parse(body);
+
+  const { data } = await withKnowledge(skillQuery(topic, input.skills), () =>
+    writeItemSet({ ...textModel, ...input, latexMath: true }),
+  );
 
   return data;
 }
 
 async function writeInteractive(body: unknown) {
-  const input = interactiveItemsInput.parse(body);
-  const { data } = await writeInteractiveItems({ ...textModel, ...input });
+  const { topic, ...input } = interactiveItemsInput.parse(body);
+
+  const { data } = await withKnowledge(skillQuery(topic, [input.skill]), () =>
+    writeInteractiveItems({ ...textModel, ...input }),
+  );
 
   return data;
 }

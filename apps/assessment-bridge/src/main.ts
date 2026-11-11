@@ -1,7 +1,11 @@
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import { zoonkDefaultProvider } from "@zoonk/ai/gateway";
+import { wrapProvider } from "ai";
 import { ZodError } from "zod";
 import { PORT, readAsset } from "./assets";
+import { readGuardrails } from "./guardrails";
+import { knowledgeStatus } from "./knowledge";
+import { promptAdditionsMiddleware } from "./prompt-additions";
 import { ROUTES } from "./routes";
 
 const MAX_BODY_BYTES = 256_000;
@@ -12,8 +16,14 @@ const TOO_LARGE = 413;
 const FAILED = 502;
 const NOT_CONFIGURED = 503;
 
-/** Tasks name their model by gateway id, which the AI SDK resolves through this provider. */
-globalThis.AI_SDK_DEFAULT_PROVIDER = zoonkDefaultProvider;
+/**
+ * Tasks name their model by gateway id, which the AI SDK resolves through this provider. The
+ * operator's guardrails and knowledge base are added here, around every task's own prompt.
+ */
+globalThis.AI_SDK_DEFAULT_PROVIDER = wrapProvider({
+  languageModelMiddleware: [promptAdditionsMiddleware],
+  provider: zoonkDefaultProvider,
+});
 
 function hasCredentials(): boolean {
   return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
@@ -81,7 +91,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   const { pathname } = new URL(request.url ?? "/", "http://localhost");
 
   if (request.method === "GET" && pathname === "/v1/health") {
-    send(response, OK, { ready: hasCredentials() });
+    send(response, OK, {
+      guardrails: readGuardrails().length > 0,
+      knowledge: knowledgeStatus(),
+      ready: hasCredentials(),
+    });
     return;
   }
 

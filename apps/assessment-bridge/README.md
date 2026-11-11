@@ -37,6 +37,15 @@ Questions come back with math in LaTeX between `\(` and `\)` (the item tasks' `l
 
 Pictures are written to `BRIDGE_DATA_DIR` (default `.data`) and served from `/assets`. A deployment replaces `saveAsset` in `src/assets.ts` with an object store.
 
+## Guardrails and knowledge base
+
+Two things an operator edits without touching code, both read again when they change:
+
+- **`guardrails.md`**: rules added to the end of every task's system prompt (goal analysis, blueprints, questions, picture scenes) and stated as taking precedence. They shape what is written; they are not a filter on what comes back.
+- **`knowledge/`**: `.md` and `.txt` reference documents. For a blueprint and for each group of questions, the passages that best match the request's words (BM25 over paragraphs, no embedding model) are added after the task's own input as reference material, marked as data. A caller passes `topic` (the assessment's subject and exam) with a question request to sharpen the match. See `knowledge/README.md`.
+
+Both are added by one language-model middleware (`src/prompt-additions.ts`) around the default provider, so the tasks themselves are unchanged. `GET /v1/health` reports whether guardrails are set and how many documents are loaded, and the server logs `knowledge: <files>` for each call that used a passage.
+
 ## What is not here
 
 `planAssessment` and `writeInteractiveItems` (`packages/ai/src/tasks/assessments`) have no eval cases yet, so their models were not chosen by an eval. The item checks and repairs in `@zoonk/core` (`library/items`) are not run on what `/v1/items` returns, since they need the database package: a caller should review questions before learners see them.
