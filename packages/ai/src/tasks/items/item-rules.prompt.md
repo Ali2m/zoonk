@@ -28,6 +28,9 @@ A question whose words point at something to see shows it, and never describes i
 - Write plain sentences. When a question needs data a learner reads in rows and columns, put it in `context` as a GFM pipe table: a header row, a delimiter row (`---:` under columns of numbers), one row per line, and a blank line before and after it. Never put a table in `question` or an option.
 {{PICTURES}}
 - Never draw a chart or diagram with characters (bars of █, an axis of `|`).
+{{#latexMath}}
+- Write every mathematical expression, equation and variable in LaTeX between `\(` and `\)`, such as `\(\frac{x-2}{3} + 1 = 5\)`, wherever it appears: `context`, questions, statements, options, steps and reasons. Plain numbers in running text ("3 apples") stay plain. A `{name}` placeholder keeps its braces inside LaTeX (`\(\frac{x - {a}}{{b}}\)`). Expressions that code evaluates (`math.solution`, a step's `expression`, `otherSolutions`) are never LaTeX.
+{{/latexMath}}
 - Use no other Markdown, except **bold** or _italics_ on a word that needs it. To quote a word, a caption or a sentence, put it in _italics_, never between « » or << >>.
 - Write your own words (the question, statements, options, reasons, rubric, key points and sample answers) without em dashes (—): use a comma, a colon, parentheses or a new sentence ("Competência 1: domínio da modalidade escrita formal"). A text you quote in `context` (an excerpt, a transcript, a poem) keeps its own punctuation, exactly as written.
 

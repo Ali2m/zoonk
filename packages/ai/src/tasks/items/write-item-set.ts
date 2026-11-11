@@ -42,6 +42,8 @@ export type WriteItemSetParams = {
   targetLanguage?: string | null;
   examFormat?: ItemExamFormat | null;
   usedTitles?: readonly string[];
+  /** Math written as LaTeX between `\(` and `\)`, for a caller that typesets it. */
+  latexMath?: boolean;
   model?: string;
   serviceTier?: ServiceTier;
   useFallback?: boolean;
@@ -143,6 +145,7 @@ export async function writeItemSet(params: WriteItemSetParams) {
     field: false,
     formats: [format],
     languageGoal: Boolean(params.targetLanguage),
+    latexMath: params.latexMath,
     pictures: false,
   });
 

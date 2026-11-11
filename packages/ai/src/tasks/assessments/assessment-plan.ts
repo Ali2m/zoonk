@@ -6,7 +6,9 @@ import { type AiGenerationContext } from "../../provenance/ai-generation-event";
 import { runTaskGeneration } from "../../provenance/run-task-generation";
 import { type Reasoning, type ServiceTier, buildProviderOptions } from "../../provider-options";
 import { getPromptLanguageName } from "../_utils/prompt-language";
-import systemPrompt from "./assessment-plan.prompt.md";
+import { selectPromptVariants } from "../_utils/prompt-variants";
+import { ASSESSMENT_FORMATS } from "./assessment-formats";
+import promptTemplate from "./assessment-plan.prompt.md";
 
 /**
  * The item writers' models, since the blueprint decides what they write. Not yet chosen by an
@@ -21,18 +23,6 @@ const MAX_GROUP_COUNT = 6;
 const MIN_PASS_PERCENT = 40;
 const MAX_PASS_PERCENT = 90;
 
-/** The item formats a blueprint may ask for: the ones a question bank can grade on its own. */
-export const ASSESSMENT_FORMATS = [
-  "multipleChoice",
-  "trueFalse",
-  "numeric",
-  "typed",
-  "matchPairs",
-  "order",
-] as const;
-
-export type AssessmentFormat = (typeof ASSESSMENT_FORMATS)[number];
-
 /* oxlint-disable eslint/sort-keys -- Structured output follows schema property order: what a group tests comes before how it tests it. */
 const groupSchema = z.object({
   skill: z.string(),
@@ -46,11 +36,23 @@ const groupSchema = z.object({
   optionCount: z.number().int().nullable(),
 });
 
-const sectionSchema = z.object({
+const subsectionSchema = z.object({
   title: z.string(),
   shuffle: z.boolean(),
-  minutes: z.number().nullable(),
   groups: z.array(groupSchema).min(1),
+});
+
+/**
+ * `support` and `extension` sections are the adaptive ones: a caller routes a learner past them
+ * by the answers so far, or leaves them out of a learner's version altogether.
+ */
+const sectionSchema = z.object({
+  title: z.string(),
+  role: z.enum(["core", "support", "extension"]),
+  shuffle: z.boolean(),
+  minutes: z.number().nullable(),
+  groups: z.array(groupSchema),
+  subsections: z.array(subsectionSchema),
 });
 
 const partSchema = z.object({
@@ -79,6 +81,8 @@ export type AssessmentPlanGroup = z.infer<typeof groupSchema>;
 
 export type AssessmentPlanInput = {
   goal: string;
+  /** Whether the blueprint routes learners through support and extension sections. */
+  adaptive?: boolean;
   /** The follow-up questions the learner answered, in the order asked. */
   answers?: readonly { question: string; answer: string }[];
   language: string;
@@ -116,12 +120,19 @@ ${formatUntrustedInput({ ANSWERS: formatAnswers(input.answers), GOAL: input.goal
 }
 
 /**
- * The blueprint of one assessment (parts, sections and groups of questions) for a learner's goal.
- * The prompt holds the learner's own words, so it is never Library input.
+ * The blueprint of one assessment (parts, sections, sub-sections and groups of questions) for a
+ * learner's goal. The prompt holds the learner's own words, so it is never Library input.
  */
 export async function planAssessment(params: AssessmentPlanParams) {
   const { analytics, model = defaultModel, reasoning, serviceTier, useFallback = true } = params;
+  const adaptive = params.adaptive ?? true;
   const userPrompt = buildUserPrompt(params);
+
+  const systemPrompt = selectPromptVariants({
+    template: promptTemplate,
+    variants: { adaptive, fixedPath: !adaptive },
+  });
+
   const providerOptions = buildProviderOptions({ fallbackModels, model, serviceTier, useFallback });
 
   const { provenance, result } = await runTaskGeneration({

@@ -63,6 +63,8 @@ export type GenerateItemsParams = {
   /** Null for general items. */
   field?: string | null;
   examFormat?: ItemExamFormat | null;
+  /** Math written as LaTeX between `\(` and `\)`, for a caller that typesets it. */
+  latexMath?: boolean;
   model?: string;
   serviceTier?: ServiceTier;
   useFallback?: boolean;
@@ -119,6 +121,7 @@ export async function generateItems(params: GenerateItemsParams) {
     field: Boolean(params.field),
     formats: [format],
     languageGoal: Boolean(params.targetLanguage),
+    latexMath: params.latexMath,
     numericEntry: format === "numeric" && describeEntry(params.examFormat?.entry) !== null,
     severalPicks: format === "multipleChoice" && picksSeveral(params.examFormat),
   });

@@ -18,6 +18,8 @@ export type ItemRulesScope = {
   formats: readonly ItemFormat[];
   field: boolean;
   languageGoal: boolean;
+  /** For a caller whose renderer typesets LaTeX; the apps here show math as plain text. */
+  latexMath?: boolean;
   numericEntry?: boolean;
   /** By default when their formats can. A set's questions share the set's stimulus instead. */
   pictures?: boolean;
@@ -65,6 +67,7 @@ function buildItemRules({
   field,
   formats,
   languageGoal,
+  latexMath = false,
   numericEntry = false,
   pictures,
   severalPicks = false,
@@ -81,7 +84,7 @@ function buildItemRules({
 
   return selectPromptVariants({
     template: rules,
-    variants: { numericEntry, onePick: !severalPicks, severalPicks },
+    variants: { latexMath, numericEntry, onePick: !severalPicks, severalPicks },
   });
 }
 

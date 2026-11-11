@@ -1,3 +1,5 @@
+import { INTERACTIVE_FORMATS, ITEM_TASK_FORMATS } from "@zoonk/ai/tasks/assessments/formats";
+import { writeInteractiveItems } from "@zoonk/ai/tasks/assessments/interactive-items";
 import { planAssessment } from "@zoonk/ai/tasks/assessments/plan";
 import { understandGoal } from "@zoonk/ai/tasks/goals/understand-goal";
 import { generateLessonImage } from "@zoonk/ai/tasks/images/generate";
@@ -47,6 +49,7 @@ const skill = z.object({
 const goalAnalysisInput = z.object({ goal: z.string().min(1).max(MAX_GOAL_LENGTH), language });
 
 const assessmentPlanInput = z.object({
+  adaptive: z.boolean().optional(),
   answers: z
     .array(
       z.object({
@@ -65,9 +68,19 @@ const assessmentPlanInput = z.object({
 const itemsInput = z.object({
   count: z.number().int().min(1).max(10),
   examFormat,
-  format: z.enum(["multipleChoice", "trueFalse", "numeric", "typed", "matchPairs", "order"]),
+  format: z.enum(ITEM_TASK_FORMATS),
   language,
   level,
+  skill,
+});
+
+const interactiveItemsInput = z.object({
+  count: z.number().int().min(1).max(6),
+  examStyle: z.string().max(MAX_TEXT_LENGTH).nullish(),
+  format: z.enum(INTERACTIVE_FORMATS),
+  language,
+  level: z.enum(["beginner", "intermediate", "advanced"]),
+  optionCount: z.number().int().min(2).max(8).nullish(),
   skill,
 });
 
@@ -113,16 +126,35 @@ async function planFromGoal(body: unknown) {
   return data;
 }
 
+/**
+ * "Select all that apply" is the multiple-choice format with every right option to pick. Math comes
+ * back as LaTeX, since the callers of this bridge typeset it.
+ */
 async function writeItems(body: unknown) {
-  const input = itemsInput.parse(body);
-  const { data } = await generateItems({ ...textModel, ...input });
+  const { examFormat: exam, format, ...input } = itemsInput.parse(body);
+  const style = exam ?? { name: null, style: "a clear classroom test" };
+
+  const { data } = await generateItems({
+    ...textModel,
+    ...input,
+    examFormat: format === "multipleSelect" ? { ...style, select: "all" } : exam,
+    format: format === "multipleSelect" ? "multipleChoice" : format,
+    latexMath: true,
+  });
 
   return data;
 }
 
 async function writeSet(body: unknown) {
   const input = itemSetInput.parse(body);
-  const { data } = await writeItemSet({ ...textModel, ...input });
+  const { data } = await writeItemSet({ ...textModel, ...input, latexMath: true });
+
+  return data;
+}
+
+async function writeInteractive(body: unknown) {
+  const input = interactiveItemsInput.parse(body);
+  const { data } = await writeInteractiveItems({ ...textModel, ...input });
 
   return data;
 }
@@ -170,6 +202,7 @@ export const ROUTES: Readonly<Record<string, (body: unknown) => Promise<unknown>
   "/v1/assessment-plans": planFromGoal,
   "/v1/goal-analyses": analyzeGoal,
   "/v1/images": drawImage,
+  "/v1/interactive-items": writeInteractive,
   "/v1/item-sets": writeSet,
   "/v1/items": writeItems,
   "/v1/visuals": drawVisualAsset,
