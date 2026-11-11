@@ -1,0 +1,21 @@
+{
+  "name": "assessment-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --conditions=react-server --env-file-if-exists=.env --import ./scripts/register-markdown.mts src/main.ts",
+    "start": "tsx --conditions=react-server --env-file-if-exists=.env --import ./scripts/register-markdown.mts src/main.ts",
+    "typecheck": "tsrs --noEmit"
+  },
+  "dependencies": {
+    "@zoonk/ai": "workspace:*",
+    "ai": "catalog:",
+    "tsx": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@zoonk/tsconfig": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

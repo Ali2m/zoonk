@@ -27,6 +27,7 @@
     "./tasks/audio/prompt": "./src/tasks/audio/language-audio-prompt.ts",
     "./tasks/courses/intent": "./src/tasks/courses/course-intent.ts",
     "./tasks/images/input-safety-rewrite": "./src/tasks/images/image-prompt-safety-rewrite.ts",
+    "./tasks/assessments/plan": "./src/tasks/assessments/assessment-plan.ts",
     "./tasks/challenge/case": "./src/tasks/challenge/challenge-case.ts",
     "./tasks/courses/details": "./src/tasks/courses/course-details.ts",
     "./tasks/courses/icon": "./src/tasks/courses/course-icon.ts",
